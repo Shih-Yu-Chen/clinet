@@ -1,4 +1,3 @@
-// mainwindow.h
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -10,6 +9,14 @@
 #include <QColor>
 #include <QPoint>
 #include <QImage>
+#include <QVector>
+#include <QInputDialog>
+#include <QColorDialog>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QDataStream>
+#include <QResizeEvent>
+
 
 class MainWindow : public QMainWindow
 {
@@ -18,6 +25,7 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(bool isServer = false, QWidget *parent = nullptr);
     ~MainWindow();
+    void resizeEvent(QResizeEvent *event) override;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -42,6 +50,13 @@ private:
     void setupNetwork();
     void sendDrawingData(const QPoint &point, bool isDrawing);
 
+    void sendImageData(const QImage &image); // Sync image functionality
+
+    void updateCanvasSize(); // Update canvas size
+
+    void scaleCanvasToFit(); // Scale the canvas to fit the window size
+
+    QPoint mapToCanvas(const QPoint &windowPoint); // Map window coordinates to canvas coordinates
     QTcpServer *server;
     QTcpSocket *clientSocket;
     QVector<QTcpSocket*> clients;
@@ -56,3 +71,5 @@ private:
 };
 
 #endif // MAINWINDOW_H
+
+

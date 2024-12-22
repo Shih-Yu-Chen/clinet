@@ -97,6 +97,7 @@ void MainWindow::createUI()
     // 設定視窗最小大小
     setMinimumSize(1250, 850);
 }
+
 void MainWindow::setupNetwork()
 {
     if (isServer) {
@@ -153,7 +154,26 @@ void MainWindow::connectToServer()
 void MainWindow::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
-    painter.drawImage(0, 0, canvas);
+    // Scale the canvas to fit the window size
+    QRect targetRect = this->rect();
+    QRect sourceRect(0, 0, canvas.width(), canvas.height());
+    painter.drawImage(targetRect, canvas, sourceRect);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    // Adjust the canvas size to match the new window size
+    scaleCanvasToFit();
+    update();
+}
+
+QPoint MainWindow::mapToCanvas(const QPoint &windowPoint)
+{
+    // Map the window point to canvas coordinates (consider scaling)
+    int x = windowPoint.x() * static_cast<double>(canvas.width()) / width();
+    int y = windowPoint.y() * static_cast<double>(canvas.height()) / height();
+    return QPoint(x, y);
 }
 
 void MainWindow::toggleEraser()
@@ -172,33 +192,21 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton) {
         isDrawing = true;
         lastPoint = event->pos();
-
-        if (isEraser) {
-            QPainter painter(&canvas);
-            painter.setPen(QPen(Qt::white, penWidth * 2, Qt::SolidLine, Qt::RoundCap));
-            painter.drawPoint(lastPoint);
-            update();
-        }
-
-        sendDrawingData(lastPoint, true);
+        lastPoint = mapToCanvas(lastPoint);  // Map to canvas coordinates
+        sendDrawingData(lastPoint, true); // 发送绘图开始的数据
     }
 }
 
 void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
     if (isDrawing) {
+        QPoint currentPoint = event->pos();
+        currentPoint = mapToCanvas(currentPoint); // Convert to canvas coordinate system
         QPainter painter(&canvas);
-
-        if (isEraser) {
-            painter.setPen(QPen(Qt::white, penWidth * 2, Qt::SolidLine, Qt::RoundCap));
-        } else {
-            painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
-        }
-
-        painter.drawLine(lastPoint, event->pos());
-        lastPoint = event->pos();
+        painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(lastPoint, currentPoint);
+        lastPoint = currentPoint;
         update();
-
         sendDrawingData(lastPoint, true);
     }
 }
@@ -213,7 +221,7 @@ void MainWindow::sendDrawingData(const QPoint &point, bool isDrawing)
 {
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
-    stream << point << isDrawing << currentColor << penWidth;
+    stream << QString("DRAW") << point << isDrawing << currentColor << penWidth;
 
     if (isServer) {
         for (QTcpSocket *client : clients) {
@@ -231,19 +239,28 @@ void MainWindow::handleReadyRead()
 
     QByteArray data = socket->readAll();
     QDataStream stream(data);
-    QPoint point;
-    bool drawing;
-    QColor color;
-    int width;
+    QString command;
+    stream >> command;
 
-    stream >> point >> drawing >> color >> width;
-
-    if (drawing) {
-        QPainter painter(&canvas);
-        painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(lastPoint, point);
-        lastPoint = point;
+    if (command == "CLEAR") {
+        // 如果是清除画布命令
+        canvas.fill(Qt::white);
         update();
+    } else if (command == "DRAW") {
+        // 处理绘图数据
+        QPoint point;
+        bool drawing;
+        QColor color;
+        int width;
+        stream >> point >> drawing >> color >> width;
+
+        if (drawing) {
+            QPainter painter(&canvas);
+            painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(lastPoint, point);
+            lastPoint = point; // 更新最后的绘图点
+            update();
+        }
     }
 }
 
@@ -270,7 +287,9 @@ void MainWindow::setPenColor()
     if (color.isValid()) {
         if (!isEraser) {
             currentColor = color;
+        } else {
             previousColor = color;
+            currentColor = Qt::white;
         }
     }
 }
@@ -279,27 +298,39 @@ void MainWindow::clearCanvas()
 {
     canvas.fill(Qt::white);
     update();
+    sendDrawingData(lastPoint, false); // Send clear command
 }
 
 void MainWindow::saveImage()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, "Save Image",
-                                                    "", "PNG files (*.png)");
+    QString fileName = QFileDialog::getSaveFileName(this, "Save Image", "", "Images (*.png *.jpg *.bmp)");
     if (!fileName.isEmpty()) {
-        canvas.save(fileName, "PNG");
+        canvas.save(fileName);
     }
 }
 
 void MainWindow::loadImage()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Load Image",
-                                                    "", "Image files (*.png *.jpg *.bmp)");
+    QString fileName = QFileDialog::getOpenFileName(this, "Load Image", "", "Image files (*.png *.jpg *.bmp)");
     if (!fileName.isEmpty()) {
-        canvas.load(fileName);
-        update();
+        if (canvas.load(fileName)) {
+            updateCanvasSize();
+            update(); // Update the display
+        }
     }
+}
+
+void MainWindow::updateCanvasSize()
+{
+    scaleCanvasToFit();
+}
+
+void MainWindow::scaleCanvasToFit()
+{
+    canvas = canvas.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
 MainWindow::~MainWindow()
 {
+    // 释放资源或清理工作
 }
