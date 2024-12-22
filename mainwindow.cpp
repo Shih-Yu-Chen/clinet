@@ -7,19 +7,23 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QSlider>
+#include <QLabel>
+#include <QToolBar>
 
 MainWindow::MainWindow(bool isServer, QWidget *parent)
     : QMainWindow(parent)
+    , server(nullptr)
+    , clientSocket(nullptr)
     , isServer(isServer)
     , isDrawing(false)
     , currentColor(Qt::black)
+    , previousColor(Qt::black)
     , penWidth(2)
     , isEraser(false)
-    , server(nullptr)
-    , clientSocket(nullptr)
 {
-    // Initialize canvas
-    canvas = QImage(800, 600, QImage::Format_RGB32);
+    // 增加畫布大小
+    canvas = QImage(1200, 800, QImage::Format_RGB32);
     canvas.fill(Qt::white);
 
     createUI();
@@ -28,34 +32,71 @@ MainWindow::MainWindow(bool isServer, QWidget *parent)
 
 void MainWindow::createUI()
 {
+    // 建立中央widget
     QWidget *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
 
+    // 建立主要垂直布局
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-    QHBoxLayout *toolLayout = new QHBoxLayout();
+    mainLayout->setContentsMargins(0, 0, 0, 0); // 移除邊距
 
-    // Create buttons
+    // 建立工具列
+    QToolBar *toolBar = new QToolBar(this);
+    addToolBar(Qt::TopToolBarArea, toolBar);
+    toolBar->setMovable(false); // 固定工具列
+
+    // 建立工具列按鈕和控制項
     QPushButton *colorBtn = new QPushButton("顏色", this);
+    QPushButton *eraserBtn = new QPushButton("橡皮擦", this);
     QPushButton *clearBtn = new QPushButton("清除", this);
     QPushButton *saveBtn = new QPushButton("保存", this);
     QPushButton *loadBtn = new QPushButton("載入", this);
 
-    // Connect signals
+    // 建立筆寬滑動條和標籤
+    QWidget *sliderWidget = new QWidget(this);
+    QHBoxLayout *sliderLayout = new QHBoxLayout(sliderWidget);
+    QLabel *sliderLabel = new QLabel("筆寬:", this);
+    QSlider *penWidthSlider = new QSlider(Qt::Horizontal, this);
+    QLabel *widthValueLabel = new QLabel(QString::number(penWidth), this);
+
+    // 設定滑動條
+    penWidthSlider->setRange(1, 50);
+    penWidthSlider->setValue(penWidth);
+    penWidthSlider->setFixedWidth(150);
+
+    // 將控制項加入滑動條布局
+    sliderLayout->addWidget(sliderLabel);
+    sliderLayout->addWidget(penWidthSlider);
+    sliderLayout->addWidget(widthValueLabel);
+    sliderLayout->setContentsMargins(5, 0, 5, 0);
+
+    // 添加工具到工具列
+    toolBar->addWidget(colorBtn);
+    toolBar->addWidget(eraserBtn);
+    toolBar->addWidget(sliderWidget);
+    toolBar->addWidget(clearBtn);
+    toolBar->addWidget(saveBtn);
+    toolBar->addWidget(loadBtn);
+
+    // 連接信號
     connect(colorBtn, &QPushButton::clicked, this, &MainWindow::setPenColor);
     connect(clearBtn, &QPushButton::clicked, this, &MainWindow::clearCanvas);
     connect(saveBtn, &QPushButton::clicked, this, &MainWindow::saveImage);
     connect(loadBtn, &QPushButton::clicked, this, &MainWindow::loadImage);
+    connect(eraserBtn, &QPushButton::clicked, this, &MainWindow::toggleEraser);
 
-    // Add widgets to layout
-    toolLayout->addWidget(colorBtn);
-    toolLayout->addWidget(clearBtn);
-    toolLayout->addWidget(saveBtn);
-    toolLayout->addWidget(loadBtn);
-    toolLayout->addStretch();
+    // 連接滑動條信號
+    connect(penWidthSlider, &QSlider::valueChanged, this, [this, widthValueLabel](int value) {
+        penWidth = value;
+        widthValueLabel->setText(QString::number(value));
+    });
 
-    mainLayout->addLayout(toolLayout);
+    // 設定橡皮擦按鈕可切換
+    eraserBtn->setCheckable(true);
+
+    // 設定視窗最小大小
+    setMinimumSize(1250, 850);
 }
-
 void MainWindow::setupNetwork()
 {
     if (isServer) {
@@ -115,11 +156,30 @@ void MainWindow::paintEvent(QPaintEvent *)
     painter.drawImage(0, 0, canvas);
 }
 
+void MainWindow::toggleEraser()
+{
+    isEraser = !isEraser;
+    if (isEraser) {
+        previousColor = currentColor;
+        currentColor = Qt::white;
+    } else {
+        currentColor = previousColor;
+    }
+}
+
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         isDrawing = true;
         lastPoint = event->pos();
+
+        if (isEraser) {
+            QPainter painter(&canvas);
+            painter.setPen(QPen(Qt::white, penWidth * 2, Qt::SolidLine, Qt::RoundCap));
+            painter.drawPoint(lastPoint);
+            update();
+        }
+
         sendDrawingData(lastPoint, true);
     }
 }
@@ -128,9 +188,14 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
     if (isDrawing) {
         QPainter painter(&canvas);
-        painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(lastPoint, event->pos());
 
+        if (isEraser) {
+            painter.setPen(QPen(Qt::white, penWidth * 2, Qt::SolidLine, Qt::RoundCap));
+        } else {
+            painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
+        }
+
+        painter.drawLine(lastPoint, event->pos());
         lastPoint = event->pos();
         update();
 
@@ -203,7 +268,10 @@ void MainWindow::setPenColor()
 {
     QColor color = QColorDialog::getColor(currentColor, this);
     if (color.isValid()) {
-        currentColor = color;
+        if (!isEraser) {
+            currentColor = color;
+            previousColor = color;
+        }
     }
 }
 

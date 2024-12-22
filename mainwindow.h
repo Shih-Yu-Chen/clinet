@@ -1,3 +1,4 @@
+// mainwindow.h
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -34,6 +35,7 @@ private slots:
     void clearCanvas();
     void saveImage();
     void loadImage();
+    void toggleEraser();
 
 private:
     void createUI();
@@ -44,11 +46,11 @@ private:
     QTcpSocket *clientSocket;
     QVector<QTcpSocket*> clients;
     bool isServer;
-
     QImage canvas;
     bool isDrawing;
     QPoint lastPoint;
     QColor currentColor;
+    QColor previousColor;
     int penWidth;
     bool isEraser;
 };
