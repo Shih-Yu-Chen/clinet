@@ -10,6 +10,9 @@
 #include <QSlider>
 #include <QLabel>
 #include <QToolBar>
+#include <QBuffer>
+#include <QTimer>
+#include <QDebug>
 
 MainWindow::MainWindow(bool isServer, QWidget *parent)
     : QMainWindow(parent)
@@ -22,7 +25,6 @@ MainWindow::MainWindow(bool isServer, QWidget *parent)
     , penWidth(2)
     , isEraser(false)
 {
-    // 增加畫布大小
     canvas = QImage(1200, 800, QImage::Format_RGB32);
     canvas.fill(Qt::white);
 
@@ -32,45 +34,37 @@ MainWindow::MainWindow(bool isServer, QWidget *parent)
 
 void MainWindow::createUI()
 {
-    // 建立中央widget
     QWidget *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
 
-    // 建立主要垂直布局
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(0, 0, 0, 0); // 移除邊距
+    mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // 建立工具列
     QToolBar *toolBar = new QToolBar(this);
     addToolBar(Qt::TopToolBarArea, toolBar);
-    toolBar->setMovable(false); // 固定工具列
+    toolBar->setMovable(false);
 
-    // 建立工具列按鈕和控制項
     QPushButton *colorBtn = new QPushButton("顏色", this);
     QPushButton *eraserBtn = new QPushButton("橡皮擦", this);
     QPushButton *clearBtn = new QPushButton("清除", this);
     QPushButton *saveBtn = new QPushButton("保存", this);
     QPushButton *loadBtn = new QPushButton("載入", this);
 
-    // 建立筆寬滑動條和標籤
     QWidget *sliderWidget = new QWidget(this);
     QHBoxLayout *sliderLayout = new QHBoxLayout(sliderWidget);
     QLabel *sliderLabel = new QLabel("筆寬:", this);
     QSlider *penWidthSlider = new QSlider(Qt::Horizontal, this);
     QLabel *widthValueLabel = new QLabel(QString::number(penWidth), this);
 
-    // 設定滑動條
     penWidthSlider->setRange(1, 50);
     penWidthSlider->setValue(penWidth);
     penWidthSlider->setFixedWidth(150);
 
-    // 將控制項加入滑動條布局
     sliderLayout->addWidget(sliderLabel);
     sliderLayout->addWidget(penWidthSlider);
     sliderLayout->addWidget(widthValueLabel);
     sliderLayout->setContentsMargins(5, 0, 5, 0);
 
-    // 添加工具到工具列
     toolBar->addWidget(colorBtn);
     toolBar->addWidget(eraserBtn);
     toolBar->addWidget(sliderWidget);
@@ -78,23 +72,18 @@ void MainWindow::createUI()
     toolBar->addWidget(saveBtn);
     toolBar->addWidget(loadBtn);
 
-    // 連接信號
     connect(colorBtn, &QPushButton::clicked, this, &MainWindow::setPenColor);
     connect(clearBtn, &QPushButton::clicked, this, &MainWindow::clearCanvas);
     connect(saveBtn, &QPushButton::clicked, this, &MainWindow::saveImage);
     connect(loadBtn, &QPushButton::clicked, this, &MainWindow::loadImage);
     connect(eraserBtn, &QPushButton::clicked, this, &MainWindow::toggleEraser);
 
-    // 連接滑動條信號
     connect(penWidthSlider, &QSlider::valueChanged, this, [this, widthValueLabel](int value) {
         penWidth = value;
         widthValueLabel->setText(QString::number(value));
     });
 
-    // 設定橡皮擦按鈕可切換
     eraserBtn->setCheckable(true);
-
-    // 設定視窗最小大小
     setMinimumSize(1250, 850);
 }
 
@@ -151,84 +140,45 @@ void MainWindow::connectToServer()
     }
 }
 
-void MainWindow::paintEvent(QPaintEvent *)
-{
-    QPainter painter(this);
-    // Scale the canvas to fit the window size
-    QRect targetRect = this->rect();
-    QRect sourceRect(0, 0, canvas.width(), canvas.height());
-    painter.drawImage(targetRect, canvas, sourceRect);
-}
-
-void MainWindow::resizeEvent(QResizeEvent *event)
-{
-    QMainWindow::resizeEvent(event);
-    // Adjust the canvas size to match the new window size
-    scaleCanvasToFit();
-    update();
-}
-
-QPoint MainWindow::mapToCanvas(const QPoint &windowPoint)
-{
-    // Map the window point to canvas coordinates (consider scaling)
-    int x = windowPoint.x() * static_cast<double>(canvas.width()) / width();
-    int y = windowPoint.y() * static_cast<double>(canvas.height()) / height();
-    return QPoint(x, y);
-}
-
-void MainWindow::toggleEraser()
-{
-    isEraser = !isEraser;
-    if (isEraser) {
-        previousColor = currentColor;
-        currentColor = Qt::white;
-    } else {
-        currentColor = previousColor;
-    }
-}
-
-void MainWindow::mousePressEvent(QMouseEvent *event)
-{
-    if (event->button() == Qt::LeftButton) {
-        isDrawing = true;
-        lastPoint = event->pos();
-        lastPoint = mapToCanvas(lastPoint);  // Map to canvas coordinates
-        sendDrawingData(lastPoint, true); // 发送绘图开始的数据
-    }
-}
-
-void MainWindow::mouseMoveEvent(QMouseEvent *event)
-{
-    if (isDrawing) {
-        QPoint currentPoint = event->pos();
-        currentPoint = mapToCanvas(currentPoint); // Convert to canvas coordinate system
-        QPainter painter(&canvas);
-        painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(lastPoint, currentPoint);
-        lastPoint = currentPoint;
-        update();
-        sendDrawingData(lastPoint, true);
-    }
-}
-
-void MainWindow::mouseReleaseEvent(QMouseEvent *)
-{
-    isDrawing = false;
-    sendDrawingData(lastPoint, false);
-}
-
 void MainWindow::sendDrawingData(const QPoint &point, bool isDrawing)
 {
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_5_15);
     stream << QString("DRAW") << point << isDrawing << currentColor << penWidth;
 
     if (isServer) {
         for (QTcpSocket *client : clients) {
             client->write(data);
+            client->flush();
         }
     } else if (clientSocket) {
         clientSocket->write(data);
+        clientSocket->flush();
+    }
+}
+
+void MainWindow::sendLoadedImage()
+{
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_5_15);
+
+    QByteArray imageData;
+    QBuffer buffer(&imageData);
+    buffer.open(QIODevice::WriteOnly);
+    canvas.save(&buffer, "PNG");
+
+    stream << QString("LOAD_IMAGE") << imageData;
+
+    if (isServer) {
+        for (QTcpSocket *client : clients) {
+            client->write(data);
+            client->flush();
+        }
+    } else if (clientSocket) {
+        clientSocket->write(data);
+        clientSocket->flush();
     }
 }
 
@@ -237,29 +187,78 @@ void MainWindow::handleReadyRead()
     QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    QByteArray data = socket->readAll();
-    QDataStream stream(data);
-    QString command;
-    stream >> command;
+    buffer.append(socket->readAll());
 
-    if (command == "CLEAR") {
-        // 如果是清除画布命令
-        canvas.fill(Qt::white);
-        update();
-    } else if (command == "DRAW") {
-        // 处理绘图数据
-        QPoint point;
-        bool drawing;
-        QColor color;
-        int width;
-        stream >> point >> drawing >> color >> width;
+    while (!buffer.isEmpty()) {
+        QDataStream stream(buffer);
+        stream.setVersion(QDataStream::Qt_5_15);
 
-        if (drawing) {
-            QPainter painter(&canvas);
-            painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
-            painter.drawLine(lastPoint, point);
-            lastPoint = point; // 更新最后的绘图点
+        if (buffer.size() < static_cast<int>(sizeof(quint32))) {
+            break;
+        }
+
+        stream.startTransaction();
+
+        QString command;
+        stream >> command;
+        qDebug() << "Attempting to read command:" << command;
+        qDebug() << "Current buffer size:" << buffer.size();
+
+        if (command == "LOAD_IMAGE") {
+            QByteArray imageData;
+            stream >> imageData;
+
+            if (!stream.commitTransaction()) {
+                qDebug() << "Incomplete data, waiting for more...";
+                break;
+            }
+
+            qDebug() << "Received complete image data size:" << imageData.size();
+
+            QImage loadedImage;
+            if (loadedImage.loadFromData(imageData, "PNG")) {
+                canvas = loadedImage;
+                update();
+                qDebug() << "Image loaded successfully";
+            } else {
+                qDebug() << "Failed to load image from data";
+            }
+
+            buffer.remove(0, stream.device()->pos());
+        }
+        else if (command == "CLEAR") {
+            if (!stream.commitTransaction()) {
+                break;
+            }
+            canvas.fill(Qt::white);
             update();
+            buffer.remove(0, stream.device()->pos());
+        }
+        else if (command == "DRAW") {
+            QPoint point;
+            bool drawing;
+            QColor color;
+            int width;
+            stream >> point >> drawing >> color >> width;
+
+            if (!stream.commitTransaction()) {
+                break;
+            }
+
+            if (drawing) {
+                QPainter painter(&canvas);
+                painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
+                painter.drawLine(lastPoint, point);
+                lastPoint = point;
+                update();
+            }
+
+            buffer.remove(0, stream.device()->pos());
+        }
+        else {
+            qDebug() << "Unknown command received:" << command;
+            buffer.clear();
+            break;
         }
     }
 }
@@ -281,6 +280,67 @@ void MainWindow::handleNewConnection()
     connect(newClient, &QTcpSocket::disconnected, this, &MainWindow::handleDisconnected);
 }
 
+void MainWindow::paintEvent(QPaintEvent *)
+{
+    QPainter painter(this);
+    QRect targetRect = this->rect();
+    QRect sourceRect(0, 0, canvas.width(), canvas.height());
+    painter.drawImage(targetRect, canvas, sourceRect);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    scaleCanvasToFit();
+    update();
+}
+
+QPoint MainWindow::mapToCanvas(const QPoint &windowPoint)
+{
+    int x = windowPoint.x() * static_cast<double>(canvas.width()) / width();
+    int y = windowPoint.y() * static_cast<double>(canvas.height()) / height();
+    return QPoint(x, y);
+}
+
+void MainWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        isDrawing = true;
+        lastPoint = mapToCanvas(event->pos());
+        sendDrawingData(lastPoint, true);
+    }
+}
+
+void MainWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (isDrawing) {
+        QPoint currentPoint = mapToCanvas(event->pos());
+        QPainter painter(&canvas);
+        painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(lastPoint, currentPoint);
+        lastPoint = currentPoint;
+        update();
+        sendDrawingData(lastPoint, true);
+    }
+}
+
+void MainWindow::mouseReleaseEvent(QMouseEvent *)
+{
+    isDrawing = false;
+    sendDrawingData(lastPoint, false);
+}
+
+void MainWindow::toggleEraser()
+{
+    isEraser = !isEraser;
+    if (isEraser) {
+        previousColor = currentColor;
+        currentColor = Qt::white;
+    } else {
+        currentColor = previousColor;
+    }
+}
+
 void MainWindow::setPenColor()
 {
     QColor color = QColorDialog::getColor(currentColor, this);
@@ -298,7 +358,23 @@ void MainWindow::clearCanvas()
 {
     canvas.fill(Qt::white);
     update();
-    sendDrawingData(lastPoint, false); // Send clear command
+
+    // 準備清除命令數據
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_5_15);
+    stream << QString("CLEAR");
+
+    // 發送到所有連接的客戶端
+    if (isServer) {
+        for (QTcpSocket *client : clients) {
+            client->write(data);
+            client->flush();
+        }
+    } else if (clientSocket) {
+        clientSocket->write(data);
+        clientSocket->flush();
+    }
 }
 
 void MainWindow::saveImage()
@@ -313,9 +389,66 @@ void MainWindow::loadImage()
 {
     QString fileName = QFileDialog::getOpenFileName(this, "Load Image", "", "Image files (*.png *.jpg *.bmp)");
     if (!fileName.isEmpty()) {
-        if (canvas.load(fileName)) {
-            updateCanvasSize();
-            update(); // Update the display
+        QImage loadedImage;
+        if (loadedImage.load(fileName)) {
+            // 獲取畫布尺寸
+            QSize canvasSize = canvas.size();
+            QImage scaledImage;
+
+            // 檢查圖片是否需要縮放
+            if (loadedImage.width() > canvasSize.width() || loadedImage.height() > canvasSize.height()) {
+                scaledImage = loadedImage.scaled(canvasSize,
+                                                 Qt::KeepAspectRatio,
+                                                 Qt::SmoothTransformation);
+            } else {
+                scaledImage = loadedImage;
+            }
+
+            // 創建新的白色背景畫布
+            QImage newCanvas(canvasSize, QImage::Format_RGB32);
+            newCanvas.fill(Qt::white);
+
+            // 計算居中位置
+            int x = (canvasSize.width() - scaledImage.width()) / 2;
+            int y = (canvasSize.height() - scaledImage.height()) / 2;
+
+            // 在新畫布上繪製圖片
+            QPainter painter(&newCanvas);
+            painter.drawImage(x, y, scaledImage);
+
+            // 更新畫布
+            canvas = newCanvas;
+            update();
+
+            // 將圖片數據轉換為字節數組
+            QByteArray imageData;
+            QBuffer buffer(&imageData);
+            buffer.open(QIODevice::WriteOnly);
+            canvas.save(&buffer, "PNG");
+
+            // 準備發送數據
+            QByteArray data;
+            QDataStream stream(&data, QIODevice::WriteOnly);
+            stream.setVersion(QDataStream::Qt_5_15);
+
+            // 寫入命令和圖片數據
+            stream << QString("LOAD_IMAGE");
+            stream << imageData;
+
+            qDebug() << "Sending total data size:" << data.size();
+
+            // 發送到所有連接的客戶端
+            if (isServer) {
+                for (QTcpSocket *client : clients) {
+                    qint64 written = client->write(data);
+                    client->flush();
+                    qDebug() << "Written bytes:" << written;
+                }
+            } else if (clientSocket) {
+                qint64 written = clientSocket->write(data);
+                clientSocket->flush();
+                qDebug() << "Written bytes:" << written;
+            }
         }
     }
 }
@@ -332,5 +465,23 @@ void MainWindow::scaleCanvasToFit()
 
 MainWindow::~MainWindow()
 {
-    // 释放资源或清理工作
+    // 清理網絡連接
+    if (server) {
+        server->close();
+        delete server;
+    }
+
+    if (clientSocket) {
+        clientSocket->disconnect();
+        clientSocket->close();
+        delete clientSocket;
+    }
+
+    // 清理所有客戶端連接
+    for (QTcpSocket* client : clients) {
+        client->disconnect();
+        client->close();
+        delete client;
+    }
+    clients.clear();
 }
