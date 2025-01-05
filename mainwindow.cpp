@@ -148,11 +148,13 @@ void MainWindow::sendDrawingData(const QPoint &point, bool isDrawing)
     stream << QString("DRAW") << point << isDrawing << currentColor << penWidth;
 
     if (isServer) {
+        serverLastPoint = point;
         for (QTcpSocket *client : clients) {
             client->write(data);
             client->flush();
         }
     } else if (clientSocket) {
+        clientLastPoint = point;
         clientSocket->write(data);
         clientSocket->flush();
     }
@@ -248,17 +250,23 @@ void MainWindow::handleReadyRead()
             if (drawing) {
                 QPainter painter(&canvas);
                 painter.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap));
-                painter.drawLine(lastPoint, point);
-                lastPoint = point;
+
+                // 如果是新的筆劃就開始新的點集
+                if (isNewStroke) {
+                    drawingPoints.clear();
+                    isNewStroke = false;
+                }
+
+                if (!drawingPoints.isEmpty()) {
+                    painter.drawLine(drawingPoints.last(), point);
+                }
+                drawingPoints.append(point);
                 update();
+            } else {
+                isNewStroke = true;
             }
 
             buffer.remove(0, stream.device()->pos());
-        }
-        else {
-            qDebug() << "Unknown command received:" << command;
-            buffer.clear();
-            break;
         }
     }
 }
@@ -306,28 +314,36 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         isDrawing = true;
-        lastPoint = mapToCanvas(event->pos());
-        sendDrawingData(lastPoint, true);
+        isNewStroke = true;
+        drawingPoints.clear();
+        QPoint point = mapToCanvas(event->pos());
+        drawingPoints.append(point);
+        sendDrawingData(point, true);
     }
 }
 
 void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
     if (isDrawing) {
-        QPoint currentPoint = mapToCanvas(event->pos());
+        QPoint point = mapToCanvas(event->pos());
+        drawingPoints.append(point);
+
         QPainter painter(&canvas);
         painter.setPen(QPen(currentColor, penWidth, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(lastPoint, currentPoint);
-        lastPoint = currentPoint;
+        painter.drawLine(drawingPoints[drawingPoints.size()-2], point);
         update();
-        sendDrawingData(lastPoint, true);
+
+        sendDrawingData(point, true);
     }
 }
 
 void MainWindow::mouseReleaseEvent(QMouseEvent *)
 {
-    isDrawing = false;
-    sendDrawingData(lastPoint, false);
+    if (isDrawing) {
+        isDrawing = false;
+        isNewStroke = true;
+        sendDrawingData(drawingPoints.last(), false);
+    }
 }
 
 void MainWindow::toggleEraser()
