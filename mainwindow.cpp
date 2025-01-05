@@ -13,6 +13,7 @@
 #include <QBuffer>
 #include <QTimer>
 #include <QDebug>
+#include <QNetworkInterface>
 
 MainWindow::MainWindow(bool isServer, QWidget *parent)
     : QMainWindow(parent)
@@ -101,18 +102,33 @@ void MainWindow::setupNetwork()
     }
 }
 
+
+QString getLocalIPAddress() {
+    foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol &&
+            address != QHostAddress::LocalHost) {
+            return address.toString();  // 返回第一个有效的局域网 IPv4 地址
+        }
+    }
+    return QString("127.0.0.1");  // 如果没有局域网地址，返回本地地址
+}
+
+
 void MainWindow::startServer()
 {
     bool ok;
+    QString localIP = getLocalIPAddress();  // 获取本机局域网 IP
     QString serverIP = QInputDialog::getText(this, "Server Setup",
                                              "Enter IP address:", QLineEdit::Normal,
-                                             "127.0.0.1", &ok);
+                                             localIP, &ok);
     if (ok && !serverIP.isEmpty()) {
         int port = QInputDialog::getInt(this, "Server Setup",
                                         "Enter port:", 1234, 1, 65535, 1, &ok);
         if (ok) {
             if (server->listen(QHostAddress(serverIP), port)) {
-                QMessageBox::information(this, "Server", "Server started successfully!");
+                QMessageBox::information(this, "Server",
+                                         QString("Server started at %1:%2")
+                                             .arg(serverIP).arg(port));
             } else {
                 QMessageBox::critical(this, "Error", "Failed to start server!");
             }
@@ -125,7 +141,7 @@ void MainWindow::connectToServer()
     bool ok;
     QString ip = QInputDialog::getText(this, "Connect to Server",
                                        "Enter server IP:", QLineEdit::Normal,
-                                       "127.0.0.1", &ok);
+                                       "192.168.1.100", &ok);  // 提供示例局域网 IP
     if (ok && !ip.isEmpty()) {
         int port = QInputDialog::getInt(this, "Connect to Server",
                                         "Enter server port:", 1234, 1, 65535, 1, &ok);
@@ -139,6 +155,7 @@ void MainWindow::connectToServer()
         }
     }
 }
+
 
 void MainWindow::sendDrawingData(const QPoint &point, bool isDrawing)
 {
